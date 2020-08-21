@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2019 the original author or authors.
+ * Copyright 2012-2020 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,6 @@ package org.springframework.boot.gradle.tasks.bundling;
 import java.io.File;
 import java.io.IOException;
 import java.io.Serializable;
-import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.regex.Pattern;
@@ -51,32 +50,10 @@ public class LaunchScriptConfiguration implements Serializable {
 
 	LaunchScriptConfiguration(AbstractArchiveTask archiveTask) {
 		Project project = archiveTask.getProject();
-		String baseName = getArchiveBaseName(archiveTask);
+		String baseName = archiveTask.getArchiveBaseName().get();
 		putIfMissing(this.properties, "initInfoProvides", baseName);
 		putIfMissing(this.properties, "initInfoShortDescription", removeLineBreaks(project.getDescription()), baseName);
 		putIfMissing(this.properties, "initInfoDescription", augmentLineBreaks(project.getDescription()), baseName);
-	}
-
-	private static String getArchiveBaseName(AbstractArchiveTask task) {
-		try {
-			Method method = findMethod(task.getClass(), "getArchiveBaseName");
-			if (method != null) {
-				return (String) method.invoke(task);
-			}
-		}
-		catch (Exception ex) {
-			// Continue
-		}
-		return task.getBaseName();
-	}
-
-	private static Method findMethod(Class<?> type, String name) {
-		for (Method candidate : type.getMethods()) {
-			if (candidate.getName().equals(name)) {
-				return candidate;
-			}
-		}
-		return null;
 	}
 
 	/**

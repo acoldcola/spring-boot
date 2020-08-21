@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2019 the original author or authors.
+ * Copyright 2012-2020 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -52,13 +52,13 @@ import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.context.properties.bind.BindException;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 import org.springframework.boot.context.properties.bind.validation.BindValidationException;
+import org.springframework.boot.context.properties.source.ConfigurationPropertyName;
 import org.springframework.boot.convert.DataSizeUnit;
 import org.springframework.boot.testsupport.system.CapturedOutput;
 import org.springframework.boot.testsupport.system.OutputCaptureExtension;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.ImportResource;
 import org.springframework.context.annotation.Scope;
 import org.springframework.context.support.PropertySourcesPlaceholderConfigurer;
@@ -98,7 +98,6 @@ import static org.mockito.Mockito.verify;
 /**
  * Tests for {@link ConfigurationProperties @ConfigurationProperties}-annotated beans.
  * Covers {@link EnableConfigurationProperties @EnableConfigurationProperties},
- * {@link ConfigurationPropertiesBindingPostProcessorRegistrar},
  * {@link ConfigurationPropertiesBindingPostProcessor} and
  * {@link ConfigurationPropertiesBinder}.
  *
@@ -168,6 +167,14 @@ class ConfigurationPropertiesTests {
 		removeSystemProperties();
 		assertThatExceptionOfType(ConfigurationPropertiesBindException.class)
 				.isThrownBy(() -> load(IgnoreUnknownFieldsFalseConfiguration.class, "name=foo", "bar=baz"))
+				.withCauseInstanceOf(BindException.class);
+	}
+
+	@Test
+	void givenIgnoreUnknownFieldsFalseAndIgnoreInvalidFieldsTrueWhenThereAreUnknownFieldsThenBindingShouldFail() {
+		removeSystemProperties();
+		assertThatExceptionOfType(ConfigurationPropertiesBindException.class).isThrownBy(
+				() -> load(IgnoreUnknownFieldsFalseIgnoreInvalidFieldsTrueConfiguration.class, "name=foo", "bar=baz"))
 				.withCauseInstanceOf(BindException.class);
 	}
 
@@ -762,13 +769,6 @@ class ConfigurationPropertiesTests {
 		assertThat(bean.getBar()).isEqualTo(5);
 	}
 
-	@Test // gh-17831
-	void loadWhenBindingConstructorParametersViaImportShouldThrowException() {
-		assertThatExceptionOfType(BeanCreationException.class)
-				.isThrownBy(() -> load(ImportConstructorParameterPropertiesConfiguration.class))
-				.withMessageContaining("@EnableConfigurationProperties or @ConfigurationPropertiesScan must be used");
-	}
-
 	@Test
 	void loadWhenBindingToConstructorParametersWithDefaultValuesShouldBind() {
 		load(ConstructorParameterConfiguration.class);
@@ -907,6 +907,26 @@ class ConfigurationPropertiesTests {
 		load(TestConfiguration.class);
 	}
 
+	@Test
+	void loadWhenConstructorBindingWithOuterClassDeducedConstructorBound() {
+		MutablePropertySources sources = this.context.getEnvironment().getPropertySources();
+		Map<String, Object> source = new HashMap<>();
+		source.put("test.nested.outer.age", "5");
+		sources.addLast(new MapPropertySource("test", source));
+		load(ConstructorBindingWithOuterClassConstructorBoundConfiguration.class);
+		ConstructorBindingWithOuterClassConstructorBoundProperties bean = this.context
+				.getBean(ConstructorBindingWithOuterClassConstructorBoundProperties.class);
+		assertThat(bean.getNested().getOuter().getAge()).isEqualTo(5);
+	}
+
+	@Test
+	void boundPropertiesShouldBeRecorded() {
+		load(NestedConfiguration.class, "name=foo", "nested.name=bar");
+		BoundConfigurationProperties bound = BoundConfigurationProperties.get(this.context);
+		Set<ConfigurationPropertyName> keys = bound.getAll().keySet();
+		assertThat(keys.stream().map(ConfigurationPropertyName::toString)).contains("name", "nested.name");
+	}
+
 	private AnnotationConfigApplicationContext load(Class<?> configuration, String... inlinedProperties) {
 		return load(new Class<?>[] { configuration }, inlinedProperties);
 	}
@@ -954,6 +974,12 @@ class ConfigurationPropertiesTests {
 	@Configuration(proxyBeanMethods = false)
 	@EnableConfigurationProperties(IgnoreUnknownFieldsFalseProperties.class)
 	static class IgnoreUnknownFieldsFalseConfiguration {
+
+	}
+
+	@Configuration(proxyBeanMethods = false)
+	@EnableConfigurationProperties(IgnoreUnknownFieldsFalseIgnoreInvalidFieldsTrueProperties.class)
+	static class IgnoreUnknownFieldsFalseIgnoreInvalidFieldsTrueConfiguration {
 
 	}
 
@@ -1401,6 +1427,11 @@ class ConfigurationPropertiesTests {
 
 	@ConfigurationProperties(ignoreUnknownFields = false)
 	static class IgnoreUnknownFieldsFalseProperties extends BasicProperties {
+
+	}
+
+	@ConfigurationProperties(ignoreUnknownFields = false, ignoreInvalidFields = true)
+	static class IgnoreUnknownFieldsFalseIgnoreInvalidFieldsTrueProperties extends BasicProperties {
 
 	}
 
@@ -1913,13 +1944,6 @@ class ConfigurationPropertiesTests {
 
 	}
 
-	@Configuration(proxyBeanMethods = false)
-	@EnableConfigurationProperties
-	@Import(ConstructorParameterProperties.class)
-	static class ImportConstructorParameterPropertiesConfiguration {
-
-	}
-
 	@ConstructorBinding
 	@ConfigurationProperties(prefix = "test")
 	@Validated
@@ -2123,6 +2147,55 @@ class ConfigurationPropertiesTests {
 	@Configuration(proxyBeanMethods = false)
 	@EnableConfigurationProperties(NestedMultipleConstructorProperties.class)
 	static class NestedMultipleConstructorsConfiguration {
+
+	}
+
+	@ConfigurationProperties("test")
+	@ConstructorBinding
+	static class ConstructorBindingWithOuterClassConstructorBoundProperties {
+
+		private final Nested nested;
+
+		ConstructorBindingWithOuterClassConstructorBoundProperties(Nested nested) {
+			this.nested = nested;
+		}
+
+		Nested getNested() {
+			return this.nested;
+		}
+
+		static class Nested {
+
+			private Outer outer;
+
+			Outer getOuter() {
+				return this.outer;
+			}
+
+			void setOuter(Outer nested) {
+				this.outer = nested;
+			}
+
+		}
+
+	}
+
+	static class Outer {
+
+		private int age;
+
+		Outer(int age) {
+			this.age = age;
+		}
+
+		int getAge() {
+			return this.age;
+		}
+
+	}
+
+	@EnableConfigurationProperties(ConstructorBindingWithOuterClassConstructorBoundProperties.class)
+	static class ConstructorBindingWithOuterClassConstructorBoundConfiguration {
 
 	}
 
